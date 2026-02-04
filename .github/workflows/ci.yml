@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
 
+env:
+  CI: "true"
+
 jobs:
   test:
     name: Tests (auto Angular ou Gradle)
@@ -75,3 +78,132 @@ jobs:
       - name: Fail job si les tests ont échoué
         if: ${{ steps.tests.outputs.code != '0' }}
         run: exit 1
+
+  build:
+    name: Build & Push (GHCR)
+    needs: test
+    runs-on: ubuntu-latest
+
+    # Build sur main + branche de test 
+    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-test') }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image name and tag (branch-sha)
+        id: img
+        shell: bash
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          BRANCH="${GITHUB_REF_NAME//\//-}"
+          echo "tag=${BRANCH}-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push (branch-sha tag)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Release (semantic-release) + Docker tag version
+    needs: test
+    runs-on: ubuntu-latest
+
+    # Release uniquement sur main
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      packages: write
+
+    steps:
+      - name: Checkout (full history for tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run semantic-release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx -y \
+            -p semantic-release \
+            -p @semantic-release/github \
+            -p @semantic-release/changelog \
+            -p @semantic-release/git \
+            semantic-release
+
+      - name: Detect released version (tag on HEAD)
+        id: rel
+        shell: bash
+        run: |
+          TAG="$(git tag --points-at HEAD --list 'v*' | tail -n 1)"
+          if [ -z "$TAG" ]; then
+            echo "No release created (no matching commits)."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image name
+        if: ${{ steps.rel.outputs.released == 'true' }}
+        id: img
+        shell: bash
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Buildx
+        if: ${{ steps.rel.outputs.released == 'true' }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: ${{ steps.rel.outputs.released == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push (semantic version tag)
+        if: ${{ steps.rel.outputs.released == 'true' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.img.outputs.image }}:${{ steps.rel.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
