@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests (auto Angular ou Gradle)
+    runs-on: ubuntu-latest
+
+    # Permissions minimales pour checkout + publier un rapport de tests en "check"
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Si c'est un repo Angular/Node
+      - name: Setup Node 20 (si package.json)
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # Si c'est un repo Java/Gradle
+      - name: Setup Java 21 (si Gradle)
+        if: ${{ hashFiles('build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'gradlew', 'gradlew.bat') != '' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Gradle cache (si Gradle)
+        if: ${{ hashFiles('build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'gradlew', 'gradlew.bat') != '' }}
+        uses: gradle/actions/setup-gradle@v4
+
+      # Je lance les tests sans casser tout de suite,
+      # pour pouvoir uploader/publier les rapports même si ça échoue.
+      - name: Run tests (run-tests.py)
+        id: tests
+        shell: bash
+        run: |
+          python run-tests.py
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload test results (JUnit XML)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          if-no-files-found: warn
+
+      - name: Publish test report (JUnit)
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Unit tests
+          path: test-results/**/*.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Fail job si les tests ont échoué
+        if: ${{ steps.tests.outputs.code != '0' }}
+        run: exit 1
