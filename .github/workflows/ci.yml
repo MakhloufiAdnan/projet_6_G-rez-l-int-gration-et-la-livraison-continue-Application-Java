@@ -84,7 +84,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
 
-    # Build sur main + branche de test 
+    # Je pousse uniquement sur main + une branche de test (ci-test), et jamais sur pull_request.
     if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-test') }}
 
     permissions:
@@ -142,6 +142,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Python (needed for Gradle version sync)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
@@ -163,6 +168,8 @@ jobs:
             -p @semantic-release/github \
             -p @semantic-release/changelog \
             -p @semantic-release/git \
+            -p @semantic-release/npm \
+            -p @semantic-release/exec \
             semantic-release
 
       - name: Detect released version (tag on HEAD)
