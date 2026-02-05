@@ -1,96 +1,141 @@
 # Workshop Organizer Web API
 
-Welcome to the Workshop Organizer Web API! This application is designed to facilitate workshops open to the public. Whether you’re organizing coding bootcamps, art classes, or any other type of workshop, this API will help manage registrations, schedules, and resources.
+Bienvenue sur Workshop Organizer Web API. Cette API facilite l’organisation d’ateliers ouverts au public (inscriptions, sessions, ressources).
 
-## Table of Contents
+## Sommaire
 
-1. Context
-2. Technical Overview
-3. Building and Running
-4. Testing
-5. Packaging
-6. Publishing to GitLab Registry
+1. Contexte
+2. Vue technique
+3. Exécution en local (sans Docker)
+4. Exécution avec Docker (compose)
+5. Configuration
+6. Tests
+7. CI/CD (GitHub Actions)
+8. Images Docker & publication sur GHCR
 
-## Context
+1) Contexte
 
-Workshops play a crucial role in fostering learning and collaboration. Our application aims to streamline the workshop organization process, making it easier for organizers to manage participants, sessions, and materials. Whether you're a seasoned workshop host or just starting out, this API has got you covered!
+Les workshops sont un excellent moyen de favoriser l’apprentissage et la collaboration. Cette API vise à simplifier la gestion des participants, des sessions et des ressources.
 
-## Technical Overview
+2) Vue technique
 
-- **Java Development Kit (JDK):** We use **JDK 21**, tested with **Adoptium**, to power our application.
-- **Database:** Our backend relies on a **PostgreSQL 13** database for data storage.
-- **Build Tool:** We leverage **Gradle 8.7** for managing dependencies and building the project.
-- **Spring Boot:** Our application is based on **Spring Boot 3.2.4**, which provides a robust framework for creating RESTful APIs.
-- **Application Server:** Our application can run on Tomcat server that require version 10.1.24.
+- JDK / Runtime : l’image d’exécution Docker utilise Eclipse Temurin JRE 21.
+- Build : multi-stage Docker avec Gradle 8.7 + JDK 21 , et le projet utilise Gradle.
+- Spring Boot : Spring Boot 3.2.4.
+- Base de données : PostgreSQL 16 Alpine.
+- Port API : exposé 8080.
 
-## Building and Running
+3) Exécution en local (sans Docker)
 
-To compile and run the application locally, follow these steps:
+* Prérequis :
 
-1. Ensure you have JDK 21 installed.
-2. Clone this repository.
-3. Navigate to the project root directory.
-4. Execute the following command to compile the Java code :
-   ```bash
-   ./gradlew clean compileJava
-   ```
-5. To run the application locally, either:
-   Execute the main method in the Application class from your IDE.
-   Use the Spring Boot Gradle Plugin :
-   ```bash
-   ./gradlew bootRun
-   ```
-   For production, package the application as WAR and use a tomcat server
+- JDK 21
+- Gradle via wrapper (./gradlew)
+- Compiler : 
+```bash
+./gradlew clean compileJava
+```
 
-To run correctly the application with docker after you building it with tag workshop-organizer, run the following
+- Lancer : 
+```bash
+./gradlew bootRun
+```
 
+4) Exécution avec Docker (docker compose)
+
+- Démarrer l’API + PostgreSQL
 ```bash
 docker compose up -d
 ```
 
-## Configuration
+API : http://localhost:8080
 
-You can configure the application with these environment variables
+PostgreSQL : conteneur workshop-db (données persistées via volume pgdata)
 
-- SPRING_DATASOURCE_URL: JDBC URI for DB access (ex. jdbc:postgresql://db:5432/mydatabase)
-- SPRING_DATASOURCE_USERNAME: Database user name used by the application
-- SPRING_DATASOURCE_PASSWORD: Database user password used by the application
+- Arrêter
+```bash
+docker compose down
+```
 
-## Testing
+- Supprimer aussi les données (volume)
+```bash
+docker compose down -v
+```
 
-We take testing seriously! To verify the correctness of our application, run the following command:
+5) Configuration
 
+* Variables principales (Spring) :
+
+- SPRING_DATASOURCE_URL (ex : jdbc:postgresql://db:5432/workshopsdb)
+- SPRING_DATASOURCE_USERNAME
+- SPRING_DATASOURCE_PASSWORD
+
+* En exécution Docker Compose, les valeurs par défaut sont déjà définies dans docker-compose.yml :
+
+- DB : workshopsdb
+- user : workshops_user
+- password : oc2024
+
+6) Tests
+* Tests Gradle (local)
 ```bash
 ./gradlew clean test
 ```
 
-During execution junit reports are generated in the `build/test-results/test` folder.
+* Rapports JUnit générés par Gradle :
 
-## Packaging
+- build/test-results/test/*.xml (structure standard Gradle)
 
-When you’re ready to package the application for deployment, create a deployable WAR file:
+* Script unifié de tests
 
+- Le dépôt inclut un script run-tests.py qui :
+  - détecte le type de projet
+  - exécute les tests
+  - copie les rapports JUnit XML dans ./test-results/
+
+- Exécution :
 ```bash
-./gradlew bootWar
+python run-tests.py
 ```
 
-The generated war file can be used with many application servers such as Tomcat, Wildfly...
+Exemple de résultats copiés (côté Gradle) :
+- test-results/build/test-results/test/*.xml
 
-## Publishing to GitLab Registry
+7) CI/CD (GitHub Actions)
 
-To publish your application to a GitLab registry, follow these steps:
+Le workflow CI est générique : il fonctionne pour ce repo Java/Gradle (et peut être identique côté Angular avec le même principe).
 
-1. Set up your GitLab project.
-2. Ensure you have the following environment variables configured:
+* Job test
+- installe ce qu’il faut (Java/Gradle ou Node selon le repo)
+- lance python run-tests.py
+- publie les rapports JUnit (fichiers XML sous test-results/**/*.xml)
 
-   - GITLAB_PROJECT_ID: The ID of your GitLab project.
-   - GITLAB_TOKEN_NAME: The name of the GitLab access token.
-   - GITLAB_TOKEN: Your GitLab access token.
+* Job build
+- build l’image Docker à partir du Dockerfile
+- push sur GitHub Container Registry (GHCR) avec un tag lisible :
+- branche-SHA (ex : main-<sha>)
 
-3. Execute the following command to publish your application:
-   ```bash
-   ./gradlew publish
-   ```
-   Remember to replace placeholders with actual values specific to your project.
+* Job release
+- s’exécute sur main
+- lance semantic-release
+- crée une GitHub Release (tag vX.Y.Z)
+- push aussi une image Docker taggée avec la version sémantique : X.Y.Z
 
-Feel free to enhance this README with additional details, such as API endpoints, security considerations, and deployment instructions. Happy organizing! 🚀
+8) Images Docker & publication sur GHCR
+
+* Nom de l’image
+
+- Le workflow pousse l’image sous :
+
+  - ghcr.io/<owner>/<repo> (calculé automatiquement dans le workflow)
+  - Tags publiés
+  - branche-SHA (ex : ci-test-<sha>, main-<sha>)
+  - X.Y.Z (après release)
+
+* Pré-requis côté GitHub (important)
+
+Pour que le push GHCR + la release fonctionnent, le repo doit autoriser le token GitHub Actions :
+- Settings → Actions → General → Workflow permissions → Read and write permissions
+- Notes “qualité”
+- docker-compose.yml utilise un healthcheck PostgreSQL (pg_isready) et depends_on: condition: service_healthy pour éviter que l’app démarre avant la DB.
+- Le Dockerfile backend est multi-stage (build puis runtime), ce qui évite d’embarquer Gradle dans l’image finale.
